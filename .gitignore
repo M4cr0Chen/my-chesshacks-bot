@@ -1,0 +1,11 @@
+__pycache__
+.venv
+venv
+.env.local
+.env
+devtools
+
+# Model weights (downloaded from Hugging Face)
+src/weights/*
+src/weights/.cache/
+.model_cache/
