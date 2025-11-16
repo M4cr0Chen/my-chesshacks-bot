@@ -1,12 +1,12 @@
 from .utils import chess_manager, GameContext
 from .model import ChessNet
 from .chess_utils import board_to_bitboard, create_legal_move_mask, move_to_index
-from .search import SearchEngine
 from .model_loader import load_model_checkpoint
 from chess import Move
 import torch
 import torch.nn.functional as F
 import os
+import time
 
 # Load model at startup
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -19,32 +19,28 @@ model.to(device)
 model.eval()
 
 print(f"✓ Model loaded! Accuracy: {checkpoint.get('val_accuracy', 0):.2%}")
-
-# Initialize search engine
-search_engine = SearchEngine(model, device=device)
-SEARCH_DEPTH = 3  # Configurable search depth
-
-print(f"✓ Search engine initialized! Depth: {SEARCH_DEPTH}")
+print(f"✓ Using pure neural network policy (no search) for maximum speed!")
 
 @chess_manager.entrypoint
 def neural_chess_bot(ctx: GameContext) -> Move:
-    """Neural network chess bot with minimax search."""
+    """Pure neural network chess bot - no search for maximum speed."""
+    start_time = time.time()
     board = ctx.board
+    time_left = ctx.timeLeft  # in milliseconds
 
-    # Use minimax search to find best move
-    best_move, search_stats = search_engine.search(board, depth=SEARCH_DEPTH)
+    # Get legal moves
+    legal_moves = list(board.legal_moves)
+    
+    if not legal_moves:
+        print("No legal moves available - game over")
+        return None
+    
+    if len(legal_moves) == 1:
+        # Only one legal move, return immediately
+        print(f"Only one legal move: {legal_moves[0].uci()}")
+        return legal_moves[0]
 
-    # Handle case where no moves available
-    if best_move is None:
-        legal_moves = list(board.legal_moves)
-        if legal_moves:
-            best_move = legal_moves[0]
-        else:
-            # Game over
-            print("No legal moves available - game over")
-            return None
-
-    # Get NN policy for visualization (still log probabilities)
+    # Get NN policy and value with single forward pass
     position = board_to_bitboard(board)
     position_tensor = torch.FloatTensor(position).unsqueeze(0).to(device)
 
@@ -58,10 +54,8 @@ def neural_chess_bot(ctx: GameContext) -> Move:
         # Softmax to get probabilities
         policy = F.softmax(policy_logits, dim=1).cpu().numpy()[0]
 
-    # Calculate move probabilities for visualization
-    legal_moves = list(board.legal_moves)
+    # Calculate move probabilities
     move_probs = {}
-
     for move in legal_moves:
         idx = move_to_index(move)
         if 0 <= idx < 4096:
@@ -72,25 +66,28 @@ def neural_chess_bot(ctx: GameContext) -> Move:
     if total > 0:
         move_probs = {m: p/total for m, p in move_probs.items()}
 
+    # Select best move (highest probability)
+    best_move = max(move_probs, key=move_probs.get)
+    
     # Log probabilities for visualization
     ctx.logProbabilities(move_probs)
 
+    # Calculate inference time
+    inference_time_ms = (time.time() - start_time) * 1000
+
     # Print detailed information
     print(f"\n{'='*60}")
-    print(f"🤖 Bot is making a move with SEARCH!")
+    print(f"🤖 Bot is making a move with PURE NN POLICY (no search)!")
     print(f"FEN: {board.fen()}")
-    print(f"\n📊 Search Statistics:")
-    print(f"  Depth: {search_stats['depth']}")
-    print(f"  Nodes searched: {search_stats['nodes_searched']:,}")
-    print(f"  NN calls: {search_stats.get('nn_calls', 0):,}")
-    print(f"  Time: {search_stats['time_ms']:.1f}ms")
-    print(f"  Speed: {search_stats.get('nps', 0):,} nodes/sec")
-    print(f"  Best score: {search_stats['best_score']:.4f}")
-    print(f"  TT hits/misses: {search_stats['tt_hits']}/{search_stats['tt_misses']}")
-    print(f"  Cutoffs: {search_stats['cutoffs']}")
+    print(f"\n⏱️  Time Management:")
+    print(f"  Time remaining: {time_left/1000:.1f}s")
+    print(f"  Inference time: {inference_time_ms:.1f}ms")
+    print(f"  Move: {board.fullmove_number}")
+    print(f"\n🧠 Neural Network Evaluation:")
+    print(f"  Position value: {value.item():.4f}")
+    print(f"  Legal moves: {len(legal_moves)}")
     print(f"\n🎯 Selected move: {best_move.uci()}")
     print(f"  NN policy probability: {move_probs.get(best_move, 0):.2%}")
-    print(f"  NN position value: {value.item():.4f}")
     print(f"\n📋 Top 5 moves by NN policy:")
     for i, (move, prob) in enumerate(sorted(move_probs.items(), key=lambda x: x[1], reverse=True)[:5], 1):
         marker = "★" if move == best_move else " "
@@ -101,6 +98,5 @@ def neural_chess_bot(ctx: GameContext) -> Move:
 
 @chess_manager.reset
 def reset_state(ctx: GameContext):
-    """Reset search state between games."""
-    search_engine.clear_tt()
-    print("Search state reset - transposition table cleared")
+    """Reset state between games (no search state to clear)."""
+    print("Game reset - ready for next game!")

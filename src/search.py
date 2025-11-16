@@ -54,6 +54,11 @@ class SearchEngine:
         Returns:
             Tuple of (best_move, search_stats)
         """
+        # Clear TT if it gets too large (>100k entries)
+        # This prevents memory issues in long games
+        if len(self.transposition_table) > 100000:
+            self.transposition_table = {}
+        
         # Initialize search statistics
         stats = {
             'depth': depth,
